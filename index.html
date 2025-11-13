@@ -1,0 +1,1455 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mockup Financiero y de Tiempo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Estilos CSS personalizados */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8;
+        }
+        .app-container {
+            max-width: 420px;
+            height: 90vh;
+            margin: 20px auto;
+            background-color: #fff;
+            border-radius: 2rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+        .view-section {
+            display: none;
+            flex-grow: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+        }
+        .view-section.active {
+            display: block;
+        }
+        .nav-item.active .nav-icon {
+            color: #4f46e5;
+        }
+        .nav-item.active .nav-text {
+            color: #4f46e5;
+            font-weight: 600;
+        }
+        .plus-button {
+            position: absolute;
+            bottom: calc(4.5rem + 16px);
+            right: 16px;
+            z-index: 10;
+        }
+        .modal-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: none;
+            justify-content: center;
+            align-items: flex-end;
+            z-index: 20;
+        }
+        .modal-overlay.active {
+            display: flex;
+        }
+        .message-box {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #4CAF50;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            z-index: 100;
+            display: none;
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out;
+        }
+        .message-box.show {
+            display: block;
+            opacity: 1;
+        }
+    </style>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.5.0/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.5.0/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, doc, setDoc, query, where, addDoc, getDoc, runTransaction, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.5.0/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/10.5.0/firebase-firestore.js";
+
+        // Configura el nivel de logs para depuración 
+        setLogLevel('debug');
+        
+        // Aquí va la configuración real de Firebase
+        const firebaseConfig = 
+        {
+            apiKey: "AIzaSyDbgphiwvrl3N-w30EiGtEJMY5S8HvdP_U",
+            authDomain: "gestion-tiempo-finanzas-efcd4.firebaseapp.com",
+            projectId: "gestion-tiempo-finanzas-efcd4",
+            storageBucket: "gestion-tiempo-finanzas-efcd4.appspot.com",
+            messagingSenderId: "67057590679",
+            appId: "1:67057590679:web:34a8c411320f19054ce4d2",
+            measurementId: "G-S32FZGXSZ3"
+        };
+
+        // Inicializa Firebase y obtiene referencias a los servicios
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth();
+
+        // Intento de inicio de sesión anónimo inicial
+        signInAnonymously(auth)
+            .then((userCredential) => {
+                window.userId = userCredential.user.uid;
+                console.log("✔ Usuario anónimo autenticado:", window.userId);
+            })
+            .catch((error) => {
+                console.error("❌ Error en login:", error);
+            });
+        
+        // Expone las referencias y variables de Firebase al ámbito global (window)
+        // Esto permite usarlas en el segundo bloque <script type="module">
+        window.db = db;
+        window.auth = auth;
+        window.appId = "default-app-id"; // puedes dejar este valor fijo
+        
+        // EXPONER LAS FUNCIONES DE FIRESTORE:
+        window.addDoc = addDoc;
+        window.collection = collection;
+        window.doc = doc;
+        window.runTransaction = runTransaction; 
+        window.updateDoc = updateDoc; 
+        window.deleteDoc = deleteDoc; 
+        window.getDoc = getDoc;
+
+        let userId = null;
+
+        // Función para mostrar mensajes de notificación (éxito o error)
+        const show_message = (message, type = 'success') => {
+            const messageBox = document.getElementById('message-box');
+            messageBox.textContent = message;
+            messageBox.style.backgroundColor = type === 'success' ? '#4CAF50' : '#f44336';
+            messageBox.classList.add('show');
+            setTimeout(() => {
+                messageBox.classList.remove('show');
+            }, 3000);
+        };
+        window.show_message = show_message;
+
+        // Lógica de inicio de sesión (anónimo o con token personalizado)
+        const initialAuthToken = ''; // Token de autenticación personalizado (vacío por defecto)
+        const signIn = async () => {
+            try {
+                if (initialAuthToken && initialAuthToken.trim() !== '') {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Error signing in with Firebase:", error);
+                try {
+                    await signInAnonymously(auth);
+                } catch (anonError) {
+                    console.error("Error signing in anonymously as a fallback:", anonError);
+                }
+            }
+        };
+
+        // Inicializa el documento de balance a 0 si es un nuevo usuario
+        const initializeBalance = async (uid) => {
+            const balanceDocRef = doc(db, `artifacts/${appId}/users/${uid}/balance`, 'current');
+            const balanceDoc = await getDoc(balanceDocRef);
+            if (!balanceDoc.exists()) {
+                await setDoc(balanceDocRef, { value: 0 });
+                console.log("Initial balance created for new user.");
+            }
+        };
+
+        // Configura los oyentes (listeners) en tiempo real de Firestore
+        const setupFirestoreListeners = () => {
+            if (!userId) {
+                console.error("No user ID available for Firestore listeners.");
+                return;
+            }
+
+            // Listener para el balance actual
+            const balanceDocRef = doc(db, `artifacts/${appId}/users/${userId}/balance`, 'current');
+            onSnapshot(balanceDocRef, (doc) => {
+                if (doc.exists()) {
+                    const balance = doc.data().value;
+                    document.querySelectorAll('.current-balance-display').forEach(el => {
+                        el.textContent = `COP ${balance.toFixed(2)}`;
+                    });
+                } else {
+                    document.querySelectorAll('.current-balance-display').forEach(el => {
+                        el.textContent = 'COP 0.00';
+                    });
+                }
+            }, (error) => {
+                console.error("Error listening to balance:", error);
+            });
+
+            // Listener para Transacciones (Movimientos)
+            const transactionsRef = collection(db, `artifacts/${appId}/users/${userId}/transactions`);
+            onSnapshot(transactionsRef, (snapshot) => {
+                const transactions = [];
+                snapshot.forEach((doc) => {
+                    transactions.push({ id: doc.id, ...doc.data() });
+                });
+                renderTransactions(transactions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+            }, (error) => {
+                console.error("Error listening to transactions:", error);
+            });
+
+            // Listener para Presupuestos (Budgets)
+            const budgetsRef = collection(db, `artifacts/${appId}/users/${userId}/budgets`);
+            onSnapshot(budgetsRef, (snapshot) => {
+                const budgets = [];
+                snapshot.forEach((doc) => {
+                    budgets.push({ id: doc.id, ...doc.data() });
+                });
+                renderBudgets(budgets);
+            }, (error) => {
+                console.error("Error listening to budgets:", error);
+            });
+
+            // Listener para Metas (Goals)
+            const goalsRef = collection(db, `artifacts/${appId}/users/${userId}/goals`);
+            onSnapshot(goalsRef, (snapshot) => {
+                const goals = [];
+                snapshot.forEach((doc) => {
+                    goals.push({ id: doc.id, ...doc.data() });
+                });
+                renderGoals(goals);
+            }, (error) => {
+                console.error("Error listening to goals:", error);
+            });
+
+            // Listener para Eventos (Events)
+            const eventsRef = collection(db, `artifacts/${appId}/users/${userId}/events`);
+            onSnapshot(eventsRef, (snapshot) => {
+                const events = [];
+                snapshot.forEach((doc) => {
+                    events.push({ id: doc.id, ...doc.data() });
+                });
+                renderEvents(events);
+                renderTodaysEvents(events);
+            }, (error) => {
+                console.error("Error listening to events:", error);
+            });
+        };
+
+        // Observador del estado de autenticación (Se ejecuta al iniciar sesión/cerrar sesión)
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                userId = user.uid;
+                document.getElementById('userIdDisplay').textContent = `Tu ID de usuario: ${userId}`;
+                console.log("Authenticated user:", userId);
+                await initializeBalance(userId);
+                setupFirestoreListeners();
+                show_message("¡Sesión iniciada correctamente!", "success");
+            } else {
+                console.log("User is signed out.");
+                userId = null;
+                document.getElementById('userIdDisplay').textContent = 'Iniciando sesión...';
+            }
+        });
+
+        // Llama a la función de inicio de sesión
+        signIn();
+
+        // --- Funciones para Renderizar Datos en la UI ---
+        
+        // Renderiza los eventos programados para el día de hoy
+        window.renderTodaysEvents = (events) => {
+            const todaysEventsList = document.getElementById('todays-events-list');
+            if (!todaysEventsList) return;
+
+            todaysEventsList.innerHTML = '';
+
+            const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+            const todaysEvents = events.filter(e => e.date === today);
+
+            if (todaysEvents.length === 0) {
+                todaysEventsList.innerHTML = '<li class="text-gray-500">No hay eventos programados para hoy.</li>';
+                return;
+            }
+
+            todaysEvents.forEach(e => {
+                const item = `
+                    <li class="p-3 bg-purple-50 rounded-xl flex justify-between items-center" data-id="${e.id}">
+                        <div class="flex items-center">
+                            <span class="text-purple-600 mr-2 text-2xl">🗓️</span>
+                            <div>
+                                <h4 class="font-medium text-gray-800">${e.name}</h4>
+                                <p class="text-sm text-gray-500">${e.time}</p>
+                            </div>
+                        </div>
+                    </li>
+                `;
+                todaysEventsList.innerHTML += item;
+            });
+        };
+
+        // Renderiza la lista de presupuestos
+        window.renderBudgets = (budgets) => {
+            const budgetsList = document.querySelector('#budgets-view .space-y-4');
+            const homeBudgetsList = document.querySelector('#home-view .budgets-summary-list');
+            if (!budgetsList || !homeBudgetsList) return;
+
+            budgetsList.innerHTML = '';
+            homeBudgetsList.innerHTML = '';
+
+            budgets.forEach(budget => {
+                const formattedTarget = budget.target.toLocaleString("es-CO", { style: "currency", currency: "COP" });
+                const formattedCurrent = budget.current.toLocaleString("es-CO", { style: "currency", currency: "COP" });
+
+                const item = `
+                    <li class="p-4 bg-white rounded-xl shadow-md border-l-4 border-indigo-500" data-id="${budget.id}">
+                        <div class="flex justify-between items-center">
+                            <h4 class="font-semibold text-lg text-gray-800">${budget.name}</h4>
+                            <div>
+                                <button class="edit-btn text-blue-500 hover:text-blue-700 mr-2" data-type="budget" data-id="${budget.id}">✏️</button>
+                                <button class="delete-btn text-red-500 hover:text-red-700" data-type="budget" data-id="${budget.id}">🗑️</button>
+                            </div>
+                        </div>
+                        <p class="text-sm text-gray-500">Meta: ${formattedTarget} | Actual: ${formattedCurrent}</p>
+                    </li>
+                `;
+                budgetsList.innerHTML += item;
+                homeBudgetsList.innerHTML += item;
+            });
+        };
+
+        // Renderiza la lista de metas
+        window.renderGoals = (goals) => {
+            const goalsList = document.querySelector('#goals-view .space-y-6');
+            const homeGoalsList = document.querySelector('#home-view .goals-summary-list');
+            if (!goalsList || !homeGoalsList) return;
+
+            goalsList.innerHTML = '';
+            homeGoalsList.innerHTML = '';
+
+            goals.forEach(goal => {
+                const formattedTarget = goal.target.toLocaleString("es-CO", { style: "currency", currency: "COP" });
+                const formattedCurrent = goal.current.toLocaleString("es-CO", { style: "currency", currency: "COP" });
+
+                const item = `
+                    <div class="p-4 bg-white rounded-xl shadow-md border-l-4 border-green-500" data-id="${goal.id}">
+                        <div class="flex justify-between items-center">
+                            <h4 class="font-semibold text-lg text-gray-800">${goal.name}</h4>
+                            <div>
+                                <button class="edit-btn text-blue-500 hover:text-blue-700 mr-2" data-type="goal" data-id="${goal.id}">✏️</button>
+                                <button class="delete-btn text-red-500 hover:text-red-700" data-type="goal" data-id="${goal.id}">🗑️</button>
+                            </div>
+                        </div>
+                        <p class="text-sm text-gray-500">Meta: ${formattedTarget} | Ahorrado: ${formattedCurrent}</p>
+                    </div>
+                `;
+                goalsList.innerHTML += item;
+                homeGoalsList.innerHTML += item;
+            });
+        };
+
+        // Renderiza la lista de transacciones (Movimientos)
+        window.renderTransactions = (transactions) => {
+            const transactionsList = document.getElementById('movements-list');
+            if (!transactionsList) return;
+
+            transactionsList.innerHTML = '';
+            transactions.forEach(t => {
+                const typeColor = t.type === 'income' ? 'text-green-600' : 'text-red-600';
+                const typeSign = t.type === 'income' ? '+' : '-';
+
+                // 👉 Aquí tienes que agregar esto
+                const formattedAmount = t.amount.toLocaleString("es-CO", { style: "currency", currency: "COP" });
+                
+                const item = `
+                    <li class="p-3 bg-white rounded-xl shadow-sm flex justify-between items-center" data-id="${t.id}">
+                        <div class="flex items-center">
+                            <span class="text-xl mr-3">${t.type === 'income' ? '💰' : '💳'}</span>
+                            <div>
+                                <h4 class="font-medium text-gray-800">${t.description}</h4>
+                                <p class="text-sm text-gray-500">${new Date(t.date).toLocaleDateString('es-CO')}</p>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <p class="font-bold ${typeColor}">${typeSign}${formattedAmount}</p>
+                            <div class="flex mt-1">
+                                <button class="edit-btn text-blue-500 hover:text-blue-700 mr-2" data-type="transaction" data-id="${t.id}">✏️</button>
+                                <button class="delete-btn text-red-500 hover:text-red-700" data-type="transaction" data-id="${t.id}">🗑️</button>
+                            </div>
+                        </div>
+                    </li>
+                `;
+                transactionsList.innerHTML += item;
+            });
+        };
+
+        // Variables de estado para Edición/Eliminación
+        let currentEditingItemId = null;
+        let currentEditingItemType = null; 
+
+        // Obtener referencias al Modal de Eliminación (¡Asegúrate de que el ID esté correcto!)
+        const deleteConfirmationModal = document.getElementById('delete-confirmation-modal');
+        const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+        const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
+        const deleteConfirmationText = document.getElementById('delete-confirmation-text');
+        let itemToDelete = { id: null, type: null }; // Estado para la eliminación
+
+        // Función para restablecer el modo de los modales a 'Crear'
+        function resetModalForCreation(form, type, modal) {
+            // Convierte 'budget' a 'Presupuesto', 'goal' a 'Meta', etc.
+            const typeName = type.charAt(0).toUpperCase() + type.slice(1);
+            
+            form.reset();
+            modal.querySelector('h3').textContent = `Crear Nuevo ${typeName}`;
+            form.querySelector('button[type="submit"]').textContent = `Guardar ${typeName}`;
+        }
+
+        window.renderEvents = (events) => {
+            // Es CRUCIAL que currentCalendarDate sea accesible desde el window
+            if (!window.currentCalendarDate) return; 
+
+            const eventsList = document.getElementById('events-list');
+            const calendarGrid = document.getElementById('calendar-grid');
+            if (!eventsList || !calendarGrid) return;
+
+            // 1. Limpiar marcas de eventos anteriores en el calendario
+            document.querySelectorAll('#calendar-grid span').forEach(span => {
+                span.classList.remove('bg-purple-300', 'rounded-full', 'font-semibold');
+            });
+            
+            eventsList.innerHTML = '';
+            
+            // 2. Filtrar eventos para el mes actual visualizado
+            const currentYearMonth = `${window.currentCalendarDate.getFullYear()}-${String(window.currentCalendarDate.getMonth() + 1).padStart(2, '0')}`;
+            const filteredEvents = events.filter(e => e.date && e.date.startsWith(currentYearMonth));
+
+            // 3. Renderizar y marcar eventos
+            if (filteredEvents.length === 0) {
+                eventsList.innerHTML = '<li class="text-gray-500">No hay eventos programados para este mes.</li>';
+            }
+
+            filteredEvents.forEach(e => {
+                // Renderizar la lista
+                const eventItem = `
+                    <li class="p-3 bg-purple-50 rounded-xl flex justify-between items-center" data-id="${e.id}">
+                        <div class="flex items-center">
+                            <span class="text-purple-600 mr-2 text-2xl">🗓️</span>
+                            <div>
+                                <h4 class="font-medium text-gray-800">${e.name}</h4>
+                                <p class="text-sm text-gray-500">${new Date(e.date).toLocaleDateString('es-ES', { timeZone: 'UTC' })} a las ${e.time}</p>
+                            </div>
+                        </div>
+                        <div>
+                            <button class="edit-btn text-blue-500 hover:text-blue-700 mr-2" data-type="event" data-id="${e.id}">✏️</button>
+                            <button class="delete-btn text-red-500 hover:text-red-700" data-type="event" data-id="${e.id}">🗑️</button>
+                        </div>
+                    </li>
+                `;
+                eventsList.innerHTML += eventItem;
+                
+                // Marcar el día en el calendario
+                const eventDay = e.date; 
+                const daySpan = calendarGrid.querySelector(`span[data-date="${eventDay}"]`);
+                if (daySpan) {
+                    daySpan.classList.add('bg-purple-300', 'rounded-full', 'font-semibold');
+                }
+            });
+        };
+    </script>
+
+</head>
+<body class="bg-gray-100 flex items-center justify-center">
+    <div class="message-box" id="message-box"></div>
+    <div class="app-container">
+        <!-- User ID Display -->
+        <div class="p-4 bg-gray-50 text-center text-sm text-gray-500 rounded-b-xl border-b border-gray-200">
+            <span id="userIdDisplay">Iniciando sesión...</span>
+        </div>
+
+        <!-- Main Views -->
+        <div id="home-view" class="view-section active">
+            <h1 class="text-3xl font-bold mb-4 text-gray-800">Pantalla Principal</h1>
+            
+            <!-- Financial Summary -->
+            <div id="balance-card" class="bg-indigo-500 text-white p-6 rounded-3xl shadow-lg mb-6">
+                <p class="text-sm font-light opacity-80">Saldo Actual</p>
+                <h2 id="current-balance" class="current-balance-display text-4xl font-extrabold mt-1">COP 0.00</h2>
+            </div>
+            <!-- Budgets Summary -->
+            <div class="bg-white p-6 rounded-3xl shadow-sm mb-6">
+                <h3 class="text-xl font-semibold mb-4 text-gray-800">Resumen de Presupuestos</h3>
+                <ul class="space-y-4 budgets-summary-list">
+                    <!-- Budgets will be rendered here -->
+                </ul>
+            </div>
+            <!-- Goals Summary -->
+            <div class="bg-white p-6 rounded-3xl shadow-sm mb-6">
+                <h3 class="text-xl font-semibold mb-4 text-gray-800">Progreso de Metas</h3>
+                <div class="space-y-4 goals-summary-list">
+                    <!-- Goals will be rendered here -->
+                </div>
+            </div>
+            <!-- Today's Events -->
+            <div class="bg-white p-6 rounded-3xl shadow-sm">
+                <h3 class="text-xl font-semibold mb-4 text-gray-800">Eventos de Hoy</h3>
+                <ul id="todays-events-list" class="space-y-3">
+                    <!-- Today's events will be rendered here -->
+                </ul>
+            </div>
+        </div>
+
+        <div id="finance-view" class="view-section">
+            <h1 class="text-3xl font-bold mb-4 text-gray-800">Finanzas</h1>
+            <div id="balance-card-finance" class="bg-indigo-500 text-white p-6 rounded-3xl shadow-lg mb-6">
+                <p class="text-sm font-light opacity-80">Saldo Actual</p>
+                <h2 id="current-balance-finance" class="current-balance-display text-4xl font-extrabold mt-1">COP 0.00</h2>
+            </div>
+            <div class="bg-white p-6 rounded-3xl shadow-sm">
+                <h3 class="text-xl font-semibold mb-3 text-gray-800">Últimos movimientos</h3>
+                <ul id="movements-list" class="space-y-4">
+                    <!-- Movements will be rendered here -->
+                </ul>
+            </div>
+        </div>
+
+        <div id="budgets-view" class="view-section">
+            <h1 class="text-3xl font-bold mb-6 text-gray-800">Presupuestos</h1>
+            <div class="bg-white p-6 rounded-3xl shadow-sm mb-4">
+                <h3 class="text-xl font-semibold text-gray-800 mb-4">Presupuestos del mes</h3>
+                <ul class="space-y-4">
+                    <!-- Budgets will be rendered here -->
+                </ul>
+            </div>
+            <button id="create-budget-btn" class="w-full bg-indigo-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg hover:bg-indigo-700 transition-colors">
+                + Crear Nuevo Presupuesto
+            </button>
+        </div>
+
+        <div id="goals-view" class="view-section">
+            <h1 class="text-3xl font-bold mb-6 text-gray-800">Metas de Ahorro</h1>
+            <div class="bg-white p-6 rounded-3xl shadow-sm mb-4">
+                <h3 class="text-xl font-semibold text-gray-800 mb-4">Progreso de Metas</h3>
+                <div class="space-y-6">
+                    <!-- Goals will be rendered here -->
+                </div>
+            </div>
+            <button id="create-goal-btn" class="w-full bg-indigo-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg hover:bg-indigo-700 transition-colors">
+                + Crear Nueva Meta
+            </button>
+        </div>
+        
+        <div id="time-view" class="view-section">
+            <h1 class="text-3xl font-bold mb-4 text-gray-800">Agenda y Eventos</h1>
+            
+            <div class="bg-white p-6 rounded-3xl shadow-sm">
+                <div class="flex justify-between items-center mb-4">
+                    <button id="prev-month-btn" class="text-gray-400">&lt;</button>
+                    <h3 id="calendar-month-year" class="text-xl font-semibold text-gray-800"></h3> 
+                    <button id="next-month-btn" class="text-gray-400">&gt;</button>
+                </div>
+                <div class="grid grid-cols-7 text-center text-sm mb-2 text-gray-500">
+                    <span>Dom</span><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span>
+                </div>
+                <div id="calendar-grid" class="grid grid-cols-7 text-center text-gray-800">
+                    </div>
+                <div class="mt-6">
+                    <h3 class="font-semibold text-xl mb-3 text-gray-800">Eventos del mes</h3>
+                    <ul id="events-list" class="space-y-3">
+                        </ul>
+                </div>
+            </div>
+            <button id="create-event-btn" class="w-full bg-purple-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg hover:bg-purple-700 transition-colors mt-6">
+                + Crear Nuevo Evento
+            </button>
+        </div>
+
+        <!-- Floating Action Button -->
+        <button id="plus-btn" class="plus-button w-14 h-14 bg-indigo-600 text-white rounded-full shadow-lg flex items-center justify-center hover:bg-indigo-700 transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+            </svg>
+        </button>
+
+        <div id="delete-confirmation-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center p-4 hidden">
+            <div class="bg-white p-6 rounded-3xl shadow-2xl w-full max-w-sm">
+                <h3 class="text-xl font-bold mb-4 text-gray-800">Confirmar Eliminación</h3>
+                <p class="text-gray-600 mb-6" id="delete-confirmation-text">¿Estás seguro de que quieres eliminar este elemento?</p>
+                <div class="flex justify-end space-x-3">
+                    <button id="cancel-delete-btn" class="bg-gray-200 text-gray-700 font-semibold py-2 px-4 rounded-xl hover:bg-gray-300 transition-colors">Cancelar</button>
+                    <button id="confirm-delete-btn" class="bg-red-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg hover:bg-red-700 transition-colors">Eliminar</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Add Modal -->
+        <div id="add-modal" class="modal-overlay">
+            <div class="bg-white p-6 rounded-t-3xl shadow-lg w-full">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-2xl font-bold">Agregar nuevo</h3>
+                    <button id="close-modal-btn" class="close-modal text-gray-400 hover:text-gray-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="space-y-4">
+                    <button id="open-transaction-modal-btn" class="w-full flex items-center justify-center bg-gray-100 p-4 rounded-xl font-medium text-gray-800">
+                        <span class="mr-2">💰</span> Registrar Gasto/Ingreso
+                    </button>
+                    <button id="open-event-modal-btn" class="w-full flex items-center justify-center bg-gray-100 p-4 rounded-xl font-medium text-gray-800">
+                        <span class="mr-2">🗓️</span> Agendar Evento
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Modal for adding a budget -->
+        <div id="add-budget-modal" class="modal-overlay">
+            <div class="bg-white p-6 rounded-t-3xl shadow-lg w-full">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-2xl font-bold">Crear Nuevo Presupuesto</h3>
+                    <button id="close-budget-modal-btn" class="close-modal text-gray-400 hover:text-gray-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <form id="budget-form" class="space-y-4">
+                    <div>
+                        <label for="budget-name" class="block text-sm font-medium text-gray-700">Nombre del presupuesto</label>
+                        <input type="text" id="budget-name" name="name" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2" required>
+                    </div>
+                    <div>
+                        <label for="budget-target" class="block text-sm font-medium text-gray-700">Meta (COP)</label>
+                        <input type="number" id="budget-target" name="target" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2" required>
+                    </div>
+                    <div>
+                        <label for="budget-current" class="block text-sm font-medium text-gray-700">Cantidad actual (COP)</label>
+                        <input type="number" id="budget-current" name="current" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2" required>
+                    </div>
+                    <button type="submit" class="w-full bg-indigo-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg hover:bg-indigo-700 transition-colors">
+                        Guardar Presupuesto
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal for adding a goal -->
+        <div id="add-goal-modal" class="modal-overlay">
+            <div class="bg-white p-6 rounded-t-3xl shadow-lg w-full">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-2xl font-bold">Crear Nueva Meta</h3>
+                    <button id="close-goal-modal-btn" class="close-modal text-gray-400 hover:text-gray-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <form id="goal-form" class="space-y-4">
+                    <div>
+                        <label for="goal-name" class="block text-sm font-medium text-gray-700">Nombre de la meta</label>
+                        <input type="text" id="goal-name" name="name" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2" required>
+                    </div>
+                    <div>
+                        <label for="goal-target" class="block text-sm font-medium text-gray-700">Meta (COP)</label>
+                        <input type="number" id="goal-target" name="target" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2" required>
+                    </div>
+                    <div>
+                        <label for="goal-current" class="block text-sm font-medium text-gray-700">Ahorrado actualmente (COP)</label>
+                        <input type="number" id="goal-current" name="current" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2" required>
+                    </div>
+                    <button type="submit" class="w-full bg-indigo-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg hover:bg-indigo-700 transition-colors">
+                        Guardar Meta
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal for adding a transaction -->
+        <div id="add-transaction-modal" class="modal-overlay">
+            <div class="bg-white p-6 rounded-t-3xl shadow-lg w-full">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-2xl font-bold">Registrar Transacción</h3>
+                    <button id="close-transaction-modal-btn" class="close-modal text-gray-400 hover:text-gray-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <form id="transaction-form" class="space-y-4">
+                    <div>
+                        <label for="transaction-description" class="block text-sm font-medium text-gray-700">Descripción</label>
+                        <input type="text" id="transaction-description" name="description" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2" required>
+                    </div>
+                    <div>
+                        <label for="transaction-amount" class="block text-sm font-medium text-gray-700">Monto (COP)</label>
+                        <input type="number" id="transaction-amount" name="amount" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2" required>
+                    </div>
+                    <div>
+                        <label for="transaction-type" class="block text-sm font-medium text-gray-700">Tipo</label>
+                        <select id="transaction-type" name="type" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2" required>
+                            <option value="expense">Gasto</option>
+                            <option value="income">Ingreso</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="w-full bg-indigo-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg hover:bg-indigo-700 transition-colors">
+                        Guardar Transacción
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal for adding an event -->
+        <div id="add-event-modal" class="modal-overlay">
+            <div class="bg-white p-6 rounded-t-3xl shadow-lg w-full">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-2xl font-bold">Agendar Nuevo Evento</h3>
+                    <button id="close-event-modal-btn" class="close-modal text-gray-400 hover:text-gray-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <form id="event-form" class="space-y-4">
+                    <div>
+                        <label for="event-name" class="block text-sm font-medium text-gray-700">Nombre del Evento</label>
+                        <input type="text" id="event-name" name="name" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2" required>
+                    </div>
+                    <div>
+                        <label for="event-date" class="block text-sm font-medium text-gray-700">Fecha</label>
+                        <input type="date" id="event-date" name="date" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2" required>
+                    </div>
+                    <div>
+                        <label for="event-time" class="block text-sm font-medium text-gray-700">Hora</label>
+                        <input type="time" id="event-time" name="time" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2" required>
+                    </div>
+                    <button type="submit" class="w-full bg-indigo-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg hover:bg-indigo-700 transition-colors">
+                        Guardar Evento
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div id="financial-coach-modal" class="modal-overlay">
+            <div class="bg-white p-6 rounded-t-3xl shadow-lg w-full">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-2xl font-bold">Consejo Financiero ✨</h3>
+                    <button id="close-gemini-modal-btn" class="close-modal text-gray-400 hover:text-gray-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="space-y-4">
+                    <div id="advice-box" class="bg-gray-100 p-4 rounded-xl text-gray-800 min-h-[100px] flex items-center justify-center text-center text-sm">
+                        <!-- Advice will be displayed here -->
+                        Pulsa el botón de abajo para obtener tu primer consejo financiero.
+                    </div>
+                    <button id="get-advice-btn" class="w-full flex items-center justify-center bg-indigo-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg hover:bg-indigo-700 transition-colors">
+                        Obtener Consejo ✨
+                    </button>
+                    <div id="loading-spinner" class="hidden text-center mt-2">
+                        <svg class="animate-spin h-6 w-6 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Navigation -->
+        <div class="bg-white border-t border-gray-200 p-2 grid grid-cols-5 text-center items-center rounded-t-3xl shadow-inner">
+            <button class="nav-item flex flex-col items-center p-2 transition-transform transform hover:scale-105 active" data-view="home-view">
+                <span class="nav-icon text-gray-400 text-2xl mb-1">🏠</span>
+                <span class="nav-text text-xs text-gray-500">Inicio</span>
+            </button>
+            <button class="nav-item flex flex-col items-center p-2 transition-transform transform hover:scale-105" data-view="finance-view">
+                <span class="nav-icon text-gray-400 text-2xl mb-1">💰</span>
+                <span class="nav-text text-xs text-gray-500">Finanzas</span>
+            </button>
+            <button class="nav-item flex flex-col items-center p-2 transition-transform transform hover:scale-105" data-view="budgets-view">
+                <span class="nav-icon text-gray-400 text-2xl mb-1">🎯</span>
+                <span class="nav-text text-xs text-gray-500">Presupuestos</span>
+            </button>
+            <button class="nav-item flex flex-col items-center p-2 transition-transform transform hover:scale-105" data-view="goals-view">
+                <span class="nav-icon text-gray-400 text-2xl mb-1">📈</span>
+                <span class="nav-text text-xs text-gray-500">Metas</span>
+            </button>
+            <button class="nav-item flex flex-col items-center p-2 transition-transform transform hover:scale-105" data-view="time-view">
+                <span class="nav-icon text-gray-400 text-2xl mb-1">⏰</span>
+                <span class="nav-text text-xs text-gray-500">Tiempo</span>
+            </button>
+        </div>
+    </div>
+
+    <script type="module">
+        // ------------------------------------------
+        // LÓGICA DEL CALENDARIO (NUEVO BLOQUE)
+        // ------------------------------------------
+
+        // Variable global para seguir el mes actual
+        window.currentCalendarDate = new Date(); 
+
+        const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+
+        // Función principal para generar el calendario
+        function renderCalendar(date) {
+            const year = date.getFullYear();
+            const month = date.getMonth();
+            
+            // 1. Calcular el primer día y el número de días
+            const firstDay = new Date(year, month, 1).getDay(); // 0 = Domingo
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+            // 2. Actualizar título
+            document.getElementById('calendar-month-year').textContent = `${monthNames[month]} ${year}`;
+            
+            // 3. Generar la cuadrícula
+            const calendarGrid = document.getElementById('calendar-grid');
+            calendarGrid.innerHTML = '';
+            
+            // Rellenar los días vacíos al inicio (el "padding")
+            for (let i = 0; i < firstDay; i++) {
+                calendarGrid.innerHTML += `<span class="py-2 text-gray-300"></span>`;
+            }
+
+            // Rellenar los días del mes
+            for (let day = 1; day <= daysInMonth; day++) {
+                // Formato YYYY-MM-DD para data-date
+                const fullDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                let dayClasses = 'py-2';
+
+                // Marcar el día actual
+                const today = new Date();
+                if (year === today.getFullYear() && month === today.getMonth() && day === today.getDate()) {
+                    dayClasses += ' font-bold bg-indigo-100 rounded-full text-indigo-700';
+                }
+                
+                calendarGrid.innerHTML += `<span class="${dayClasses}" data-date="${fullDate}">${day}</span>`;
+            }
+            
+            // Disparar la re-renderización de eventos
+            window.renderEvents(window.allEvents || []);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+
+            const views = document.querySelectorAll('.view-section');
+            const navItems = document.querySelectorAll('.nav-item');
+            const plusBtn = document.getElementById('plus-btn');
+            const addModal = document.getElementById('add-modal');
+            const closeModalBtn = document.getElementById('close-modal-btn');
+            const financialCoachModal = document.getElementById('financial-coach-modal');
+            const closeGeminiModalBtn = document.getElementById('close-gemini-modal-btn');
+            const getAdviceBtn = document.getElementById('get-advice-btn');
+            const adviceBox = document.getElementById('advice-box');
+            const loadingSpinner = document.getElementById('loading-spinner');
+
+            const createBudgetBtn = document.getElementById('create-budget-btn');
+            const createGoalBtn = document.getElementById('create-goal-btn');
+            const addBudgetModal = document.getElementById('add-budget-modal');
+            const addGoalModal = document.getElementById('add-goal-modal');
+            const closeBudgetModalBtn = document.getElementById('close-budget-modal-btn');
+            const closeGoalModalBtn = document.getElementById('close-goal-modal-btn');
+            const budgetForm = document.getElementById('budget-form');
+            const goalForm = document.getElementById('goal-form');
+            const createEventBtn = document.getElementById('create-event-btn');
+            createEventBtn.addEventListener('click', () => {
+                addEventModal.classList.add('active'); // o remove 'hidden' si lo usas
+            });
+
+            // --- Cerrar modales con la X ---
+            document.querySelectorAll('.close-modal').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const modal = e.target.closest('.modal-overlay');
+                    if (modal) {
+                        modal.classList.remove('active');
+                    }
+                });
+            });
+
+            const openTransactionModalBtn = document.getElementById('open-transaction-modal-btn');
+            const addTransactionModal = document.getElementById('add-transaction-modal');
+            const closeTransactionModalBtn = document.getElementById('close-transaction-modal-btn');
+            const transactionForm = document.getElementById('transaction-form');
+
+            const openEventModalBtn = document.getElementById('open-event-modal-btn');
+            const addEventModal = document.getElementById('add-event-modal');
+            const closeEventModalBtn = document.getElementById('close-event-modal-btn');
+            const eventForm = document.getElementById('event-form');
+            
+            let currentEditingItemId = null;
+            let currentEditingItemType = null; 
+
+            const deleteConfirmationModal = document.getElementById('delete-confirmation-modal');
+            const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+            const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
+            const deleteConfirmationText = document.getElementById('delete-confirmation-text');
+            let itemToDelete = { id: null, type: null }; 
+
+            // Función para restablecer el modo de los modales a 'Crear'
+            function resetModalForCreation(form, type, modal) {
+                const typeName = type.charAt(0).toUpperCase() + type.slice(1);
+                form.reset();
+                modal.querySelector('h3').textContent = `Crear Nuevo ${typeName}`;
+                form.querySelector('button[type="submit"]').textContent = `Guardar ${typeName}`;
+            }
+            
+            // ------------------------------------------
+            // LÓGICA DE EDICIÓN Y ELIMINACIÓN (Manejadores de Clicks)
+            // ------------------------------------------
+
+            document.querySelector('.app-container').addEventListener('click', async (e) => {
+    
+                // Solo procesamos clics si el elemento tiene data-id y data-type
+                const id = e.target.dataset.id;
+                const type = e.target.dataset.type;
+                
+                if (!id || !type) return;
+                
+                const userId = window.auth.currentUser.uid;
+                const collectionPath = `artifacts/${window.appId}/users/${userId}/${type}s`;
+                
+                // --- Lógica de EDICIÓN (Cargar datos al formulario) ---
+                if (e.target.classList.contains('edit-btn')) {
+                    currentEditingItemId = id;
+                    currentEditingItemType = type;
+                    
+                    try {
+                        const itemDocRef = window.doc(window.db, collectionPath, id);
+                        const docSnapshot = await window.getDoc(itemDocRef);
+                        
+                        if (!docSnapshot.exists()) {
+                            window.show_message(`Error: Documento de ${type} no encontrado.`, 'error');
+                            return;
+                        }
+
+                        const data = docSnapshot.data();
+                        let modal, form;
+
+                        // ⚠️ Rellenado de campos (CRUCIAL para que funcione la edición) ⚠️
+                        if (type === 'budget') {
+                            modal = addBudgetModal;
+                            form = budgetForm;
+
+                            form.querySelector('input[name="name"]').value = data.name || '';
+                            form.querySelector('input[name="target"]').value = data.target || 0;
+                            form.querySelector('input[name="current"]').value = data.current || 0;
+                        } else if (type === 'goal') {
+                            modal = addGoalModal;
+                            form = goalForm;
+
+                            form.querySelector('input[name="name"]').value = data.name || '';
+                            form.querySelector('input[name="target"]').value = data.target || 0;
+                            form.querySelector('input[name="current"]').value = data.current || 0;
+                        } else if (type === 'event') {
+                            modal = addEventModal;
+                            form = eventForm;
+
+                            form.querySelector('input[name="name"]').value = data.name || '';
+                            form.querySelector('input[name="date"]').value = data.date || '';
+                            form.querySelector('input[name="time"]').value = data.time || '';
+                        } else if (type === 'transaction') {
+                            modal = addTransactionModal;
+                            form = transactionForm;
+
+                            form.querySelector('input[name="description"]').value = data.description || '';
+                            form.querySelector('input[name="amount"]').value = data.amount || 0;
+                            form.querySelector('select[name="type"]').value = data.type || 'expense';
+                        }
+
+                        // Cambiar texto y abrir modal
+                        modal.querySelector('h3').textContent = `Editar ${type.charAt(0).toUpperCase() + type.slice(1)}`;
+                        form.querySelector('button[type="submit"]').textContent = `Guardar Cambios`;
+                        modal.classList.add('active'); // O modal.classList.add('active'); si esa es tu clase para mostrar
+                        
+                    } catch (error) {
+                        console.error(`Error al cargar datos del documento para edición:`, error);
+                        window.show_message(`Error al cargar los datos de ${type}.`, 'error');
+                    }
+                }
+                
+                // --- Lógica de ELIMINACIÓN (Muestra el modal de confirmación) ---
+                if (e.target.classList.contains('delete-btn')) {
+                    itemToDelete = { id, type };
+                    const nameType = type === 'budget' ? 'presupuesto' : type === 'goal' ? 'meta' : type === 'event' ? 'evento' : 'registro';
+                    deleteConfirmationText.textContent = `¿Estás seguro de que quieres eliminar este ${nameType}?`;
+                    deleteConfirmationModal.classList.remove('hidden');
+                }
+            });
+
+            // ------------------------------------------
+            // Manejador del modal de Confirmación de Eliminación
+            // ------------------------------------------
+            cancelDeleteBtn.addEventListener('click', () => {
+                deleteConfirmationModal.classList.add('hidden');
+                itemToDelete = { id: null, type: null };
+            });
+
+            confirmDeleteBtn.addEventListener('click', async () => {
+                if (!itemToDelete.id || !itemToDelete.type) return;
+
+                const { id, type } = itemToDelete;
+                deleteConfirmationModal.classList.add('hidden');
+                
+                const userId = window.auth.currentUser.uid;
+                const collectionPath = `artifacts/${window.appId}/users/${userId}/${type}s`;
+                
+                try {
+                    const itemDocRef = window.doc(window.db, collectionPath, id);
+                    await window.deleteDoc(itemDocRef);
+                    window.show_message(`${type.charAt(0).toUpperCase() + type.slice(1)} eliminado con éxito.`);
+                    
+                    // ⚠️ Si los listeners en tiempo real fallan, esta línea es NECESARIA para forzar la actualización.
+                    // setupRealtimeListeners(userId); // Descomenta si lo necesitas
+
+                } catch (error) {
+                    console.error(`Error deleting ${type}:`, error);
+                    window.show_message(`Error al eliminar el ${type}.`, 'error');
+                } finally {
+                    itemToDelete = { id: null, type: null };
+                }
+            });
+
+            // Function to switch views
+            function showView(viewId) {
+                views.forEach(view => {
+                    view.classList.remove('active');
+                });
+                document.getElementById(viewId).classList.add('active');
+            }
+            // ------------------------------------------
+            // INICIALIZACIÓN Y NAVEGACIÓN DEL CALENDARIO (NUEVO BLOQUE)
+            // ------------------------------------------
+            const prevMonthBtn = document.getElementById('prev-month-btn');
+            const nextMonthBtn = document.getElementById('next-month-btn');
+
+            // Inicializar el calendario al cargar
+            renderCalendar(window.currentCalendarDate);
+
+            // Función que navega el mes y renderiza todo
+            function navigateAndRender(offset) {
+                window.currentCalendarDate.setMonth(window.currentCalendarDate.getMonth() + offset);
+                renderCalendar(window.currentCalendarDate);
+            }
+
+            // Manejar la navegación de meses
+            prevMonthBtn.addEventListener('click', () => {
+                navigateAndRender(-1);
+            });
+
+            nextMonthBtn.addEventListener('click', () => {
+                navigateAndRender(1);
+            });
+
+            // Function to handle navigation
+            navItems.forEach(item => {
+                item.addEventListener('click', () => {
+                    // Remove active class from all nav items
+                    navItems.forEach(nav => nav.classList.remove('active'));
+                    // Add active class to the clicked item
+                    item.classList.add('active');
+                    // Show the corresponding view
+                    showView(item.getAttribute('data-view'));
+                });
+            });   
+
+            // Handle the plus button to show modal
+            plusBtn.addEventListener('click', () => {
+                addModal.classList.add('active');
+            });
+
+            // Handle the close main modal button
+            closeModalBtn.addEventListener('click', () => {
+                addModal.classList.remove('active');
+            });
+
+            // Open transaction modal from main modal
+            openTransactionModalBtn.addEventListener('click', () => {
+                addModal.classList.remove('active');
+                addTransactionModal.classList.add('active');
+            });
+
+            // Close transaction modal
+            closeTransactionModalBtn.addEventListener('click', () => {
+                addTransactionModal.classList.remove('active');
+            });
+
+            // Open event modal from main modal
+            openEventModalBtn.addEventListener('click', () => {
+                addModal.classList.remove('active');
+                addEventModal.classList.add('active');
+            });
+
+            // Close event modal
+            closeEventModalBtn.addEventListener('click', () => {
+                addEventModal.classList.remove('active');
+            });
+
+            // Handle the close gemini modal button
+            closeGeminiModalBtn.addEventListener('click', () => {
+                financialCoachModal.classList.remove('active');
+            });
+
+            // Close modal when clicking outside
+            addModal.addEventListener('click', (event) => {
+                if (event.target === addModal) {
+                    addModal.classList.remove('active');
+                }
+            });
+            financialCoachModal.addEventListener('click', (event) => {
+                if (event.target === financialCoachModal) {
+                    financialCoachModal.classList.remove('active');
+                }
+            });
+            
+            addBudgetModal.addEventListener('click', (event) => {
+                if (event.target === addBudgetModal) {
+                    addBudgetModal.classList.remove('active');
+                }
+            });
+
+            addGoalModal.addEventListener('click', (event) => {
+                if (event.target === addGoalModal) {
+                    addGoalModal.classList.remove('active');
+                }
+            });
+
+            addTransactionModal.addEventListener('click', (event) => {
+                if (event.target === addTransactionModal) {
+                    addTransactionModal.classList.remove('active');
+                }
+            });
+
+            addEventModal.addEventListener('click', (event) => {
+                if (event.target === addEventModal) {
+                    addEventModal.classList.remove('active');
+                }
+            });
+
+            createBudgetBtn.addEventListener('click', () => {
+                addBudgetModal.classList.add('active');
+            });
+            
+            closeBudgetModalBtn.addEventListener('click', () => {
+                addBudgetModal.classList.remove('active');
+            });
+
+            createGoalBtn.addEventListener('click', () => {
+                addGoalModal.classList.add('active');
+            });
+
+            closeGoalModalBtn.addEventListener('click', () => {
+                addGoalModal.classList.remove('active');
+            });
+
+            // Handle the get advice button to call Gemini API
+            getAdviceBtn.addEventListener('click', async () => {
+                adviceBox.textContent = '';
+                loadingSpinner.classList.remove('hidden');
+
+                const apiKey = "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+                const currentBalance = document.getElementById('current-balance').textContent;
+                const lastMovements = Array.from(document.querySelectorAll('#movements-list li')).map(li => li.textContent.trim()).join('. ');
+                const budgets = Array.from(document.querySelectorAll('#budgets-view li')).map(li => li.textContent.trim()).join('. ');
+
+                const userQuery = `Analiza mis finanzas actuales.
+                Saldo: ${currentBalance}
+                Movimientos recientes: ${lastMovements}
+                Presupuestos: ${budgets}
+                Dame un consejo financiero conciso y procesable, no más de dos oraciones.`;
+                
+                let retries = 0;
+                const maxRetries = 3;
+                let response;
+
+                while (retries < maxRetries) {
+                    try {
+                        response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ contents: [{ parts: [{ text: userQuery }] }] }),
+                        });
+
+                        if (response.status === 429) {
+                            retries++;
+                            await new Promise(resolve => setTimeout(resolve, Math.pow(2, retries) * 1000));
+                            continue;
+                        }
+
+                        if (!response.ok) {
+                            throw new Error(`API call failed with status: ${response.status}`);
+                        }
+
+                        const result = await response.json();
+                        const advice = result?.candidates?.[0]?.content?.parts?.[0]?.text || 'No se pudo obtener el consejo. Inténtalo de nuevo.';
+                        adviceBox.textContent = advice;
+                        break; // Exit the loop on success
+                    } catch (error) {
+                        console.error("Error al llamar a la API de Gemini:", error);
+                        adviceBox.textContent = 'Hubo un error al generar el consejo. Por favor, inténtalo más tarde.';
+                        break; // Exit the loop on error
+                    } finally {
+                        loadingSpinner.classList.add('hidden');
+                    }
+                }
+            });
+
+            // Handle form submission for transactions
+            transactionForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const userId = window.auth.currentUser.uid;
+            if (!userId) {
+                window.show_message('Error: Usuario no autenticado. Por favor, recarga la página.', 'error');
+                return;
+            }
+
+            const formData = new FormData(transactionForm);
+            const amount = parseFloat(formData.get('amount'));
+            const transactionType = formData.get('type');
+            const collectionPath = `artifacts/${window.appId}/users/${userId}/transactions`;
+            
+            const transactionData = {
+                description: formData.get('description'),
+                amount: amount,
+                type: transactionType,
+                date: new Date().toISOString() // ✅ fecha actual
+            };
+            
+            const isEditing = currentEditingItemId !== null && currentEditingItemType === 'transaction';
+            const saveButton = transactionForm.querySelector('button[type="submit"]');
+
+            saveButton.disabled = true;
+            saveButton.textContent = 'Guardando...';
+
+            try {
+                if (isEditing) {
+                    // MODO EDICIÓN
+                    const itemDocRef = window.doc(window.db, collectionPath, currentEditingItemId);
+                    const oldDoc = await window.getDoc(itemDocRef);
+
+                    if (!oldDoc.exists()) {
+                        window.show_message('Error: no se encontró la transacción a editar.', 'error');
+                        return;
+                    }
+
+                    const oldData = oldDoc.data();
+                    await window.updateDoc(itemDocRef, transactionData);
+                    window.show_message('Transacción actualizada con éxito.');
+
+                    // Ajustar balance
+                    let oldAdjustment = oldData.type === 'income' ? oldData.amount : -oldData.amount;
+                    let newAdjustment = transactionType === 'income' ? amount : -amount;
+                    let balanceDiff = newAdjustment - oldAdjustment;
+
+                    const balanceDocRef = window.doc(window.db, `artifacts/${window.appId}/users/${userId}/balance`, 'current');
+                    await window.runTransaction(window.db, async (transaction) => {
+                        const balanceDoc = await transaction.get(balanceDocRef);
+                        const currentBalance = balanceDoc.exists() ? balanceDoc.data().value : 0;
+                        transaction.set(balanceDocRef, { value: currentBalance + balanceDiff });
+                    });
+                } else {
+                    // ⭐ MODO CREACIÓN (El bloque que faltaba) ⭐
+                    transactionData.createdAt = new Date().toISOString(); 
+                    
+                    // 1. Añadir el documento de transacción
+                    await window.addDoc(window.collection(window.db, collectionPath), transactionData);
+                    window.show_message('Transacción guardada con éxito.');
+
+                    // 2. Ajustar el balance por la nueva transacción
+                    let balanceAdjustment = transactionType === 'income' ? amount : -amount;
+                    const balanceDocRef = window.doc(window.db, `artifacts/${window.appId}/users/${userId}/balance`, 'current');
+                    
+                    await window.runTransaction(window.db, async (transaction) => {
+                        const balanceDoc = await transaction.get(balanceDocRef);
+                        const currentBalance = balanceDoc.exists() ? balanceDoc.data().value : 0;
+                        transaction.set(balanceDocRef, { value: currentBalance + balanceAdjustment });
+                    });
+                }
+                
+                // Cierra el modal
+                addTransactionModal.classList.remove('active'); 
+                addTransactionModal.classList.remove('hidden'); // Aseguramos que se oculte correctamente
+            } catch (error) {
+                console.error("Error saving transaction:", error);
+                window.show_message('Error al guardar la transacción.', 'error');
+            } finally {
+                saveButton.disabled = false;
+                // Resetear el estado de edición y el modal
+                currentEditingItemId = null;
+                currentEditingItemType = null;
+                resetModalForCreation(transactionForm, 'transaction', addTransactionModal);
+            }
+        });
+
+            // Handle form submission for budgets
+            budgetForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const userId = window.auth.currentUser.uid;
+            if (!userId) {
+                window.show_message('Error: Usuario no autenticado. Por favor, recarga la página.', 'error');
+                return;
+            }
+
+            const formData = new FormData(budgetForm);
+            const collectionPath = `artifacts/${window.appId}/users/${userId}/budgets`;
+            
+            const budgetData = {
+                name: formData.get('name'),
+                target: parseFloat(formData.get('target')),
+                current: parseFloat(formData.get('current')),
+            };
+
+            const isEditing = currentEditingItemId !== null && currentEditingItemType === 'budget';
+            const saveButton = budgetForm.querySelector('button[type="submit"]');
+
+            saveButton.disabled = true;
+            saveButton.textContent = 'Guardando...';
+
+            try {
+                if (isEditing) {
+                    // ✅ CORREGIDO: MODO EDICIÓN -> Usar updateDoc
+                    const itemDocRef = window.doc(window.db, collectionPath, currentEditingItemId);
+                    await window.updateDoc(itemDocRef, budgetData);
+                    window.show_message('Presupuesto actualizado con éxito.');
+                } else {
+                    // MODO CREACIÓN -> Usar addDoc
+                    budgetData.createdAt = new Date().toISOString(); 
+                    await window.addDoc(window.collection(window.db, collectionPath), budgetData);
+                    window.show_message('Presupuesto guardado con éxito.');
+                }
+
+                addBudgetModal.classList.add('hidden');
+            } catch (error) {
+                console.error("Error saving budget:", error);
+                window.show_message('Error al guardar el presupuesto.', 'error');
+            } finally {
+                saveButton.disabled = false;
+                // ✅ CRUCIAL: Resetear el estado de edición y el modal
+                currentEditingItemId = null;
+                currentEditingItemType = null;
+                resetModalForCreation(budgetForm, 'budget', addBudgetModal);
+            }
+        });
+
+            // Handle form submission for goals
+            goalForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const userId = window.auth.currentUser.uid;
+            if (!userId) {
+                window.show_message('Error: Usuario no autenticado. Por favor, recarga la página.', 'error');
+                return;
+            }
+
+            const formData = new FormData(goalForm);
+            const collectionPath = `artifacts/${window.appId}/users/${userId}/goals`;
+            
+            const goalData = {
+                name: formData.get('name'),
+                target: parseFloat(formData.get('target')),
+                current: parseFloat(formData.get('current')),
+            };
+
+            const isEditing = currentEditingItemId !== null && currentEditingItemType === 'goal';
+            const saveButton = goalForm.querySelector('button[type="submit"]');
+
+            saveButton.disabled = true;
+            saveButton.textContent = 'Guardando...';
+
+            try {
+                if (isEditing) {
+                    // ✅ CORREGIDO: MODO EDICIÓN -> Usar updateDoc
+                    const itemDocRef = window.doc(window.db, collectionPath, currentEditingItemId);
+                    await window.updateDoc(itemDocRef, goalData);
+                    window.show_message('Meta actualizada con éxito.');
+                } else {
+                    // MODO CREACIÓN -> Usar addDoc
+                    goalData.createdAt = new Date().toISOString(); 
+                    await window.addDoc(window.collection(window.db, collectionPath), goalData);
+                    window.show_message('Meta guardada con éxito.');
+                }
+
+                addGoalModal.classList.add('hidden');
+            } catch (error) {
+                console.error("Error saving goal:", error);
+                window.show_message('Error al guardar la meta.', 'error');
+            } finally {
+                saveButton.disabled = false;
+                // ✅ CRUCIAL: Resetear el estado de edición y el modal
+                currentEditingItemId = null;
+                currentEditingItemType = null;
+                resetModalForCreation(goalForm, 'goal', addGoalModal);
+            }
+        });
+
+            // Handle form submission for events
+            eventForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const userId = window.auth.currentUser.uid;
+            if (!userId) {
+                window.show_message('Error: Usuario no autenticado. Por favor, recarga la página.', 'error');
+                console.error("User not authenticated.");
+                return;
+            }
+
+            const formData = new FormData(eventForm);
+            const collectionPath = `artifacts/${window.appId}/users/${userId}/events`;
+            
+            const eventData = {
+                name: formData.get('name'),
+                date: formData.get('date'),
+                time: formData.get('time'),
+            };
+
+            const isEditing = currentEditingItemId !== null && currentEditingItemType === 'event';
+            const saveButton = eventForm.querySelector('button[type="submit"]');
+
+            saveButton.disabled = true;
+            saveButton.textContent = 'Guardando...';
+
+            try {
+                if (isEditing) {
+                    // MODO EDICIÓN: Usar updateDoc
+                    const itemDocRef = window.doc(window.db, collectionPath, currentEditingItemId);
+                    await window.updateDoc(itemDocRef, eventData);
+                    window.show_message('Evento actualizado con éxito.');
+                } else {
+                    // MODO CREACIÓN: Usar addDoc
+                    eventData.createdAt = new Date().toISOString();
+                    await window.addDoc(window.collection(window.db, collectionPath), eventData);
+                    window.show_message('Evento guardado con éxito.');
+                }
+
+                addEventModal.classList.remove('active');
+                addEventModal.classList.add('hidden');
+            } catch (error) {
+                console.error("Error saving event:", error);
+                window.show_message('Error al guardar el evento.', 'error');
+            } finally {
+                saveButton.disabled = false;
+                // Resetear el estado de edición y el modal
+                currentEditingItemId = null;
+                currentEditingItemType = null;
+                resetModalForCreation(eventForm, 'event', addEventModal);
+            }
+        });
+        });
+    </script>
+</body>
+</html>
