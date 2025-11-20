@@ -1005,21 +1005,49 @@
 
                 const { id, type } = itemToDelete;
                 deleteConfirmationModal.classList.add('hidden');
-                
+
                 const userId = window.auth.currentUser.uid;
                 const collectionPath = `artifacts/${window.appId}/users/${userId}/${type}s`;
-                
+
                 try {
                     const itemDocRef = window.doc(window.db, collectionPath, id);
-                    await window.deleteDoc(itemDocRef);
-                    window.show_message(`${type.charAt(0).toUpperCase() + type.slice(1)} eliminado con éxito.`);
-                    
-                    // ⚠️ Si los listeners en tiempo real fallan, esta línea es NECESARIA para forzar la actualización.
-                    // setupRealtimeListeners(userId); // Descomenta si lo necesitas
 
+                    // 👉 1. Obtener los datos antes de eliminar
+                    const docSnap = await window.getDoc(itemDocRef);
+                    if (!docSnap.exists()) {
+                        window.show_message("No se encontró el elemento a eliminar", "error");
+                        return;
+                    }
+
+                    const data = docSnap.data();
+
+                    // 👉 2. Ajustar balance SOLO si es transacción
+                    if (type === "transaction") {
+                        const balanceDocRef = window.doc(
+                            window.db,
+                            `artifacts/${window.appId}/users/${userId}/balance`,
+                            "current"
+                        );
+
+                        await window.runTransaction(window.db, async (transaction) => {
+                            const balanceDoc = await transaction.get(balanceDocRef);
+                            const currentBalance = balanceDoc.exists() ? balanceDoc.data().value : 0;
+
+                            let adjustment = 0;
+                            if (data.type === "income") adjustment = -data.amount;
+                            if (data.type === "expense") adjustment = +data.amount;
+
+                            transaction.set(balanceDocRef, { value: currentBalance + adjustment });
+                        });
+                    }
+
+                    // 👉 3. Eliminar el documento
+                    await window.deleteDoc(itemDocRef);
+
+                    window.show_message("Eliminado correctamente.");
                 } catch (error) {
-                    console.error(`Error deleting ${type}:`, error);
-                    window.show_message(`Error al eliminar el ${type}.`, 'error');
+                    console.error("Error deleting:", error);
+                    window.show_message(`Error al eliminar el ${type}.`, "error");
                 } finally {
                     itemToDelete = { id: null, type: null };
                 }
@@ -1453,3 +1481,4 @@
     </script>
 </body>
 </html>
+
